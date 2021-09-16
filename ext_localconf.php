@@ -1,7 +1,5 @@
 <?php
-/**
- * @phpstan-ignore-next-line
- */
+
 defined('TYPO3_MODE') || die();
 
 call_user_func(

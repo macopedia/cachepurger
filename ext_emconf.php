@@ -1,7 +1,5 @@
 <?php
-/**
- * @phpstan-ignore-next-line
- */
+
 $EM_CONF[$_EXTKEY] = [
     'title' => 'Cache Purger',
     'description' => 'Purge cached URLs within Varnish instances',
