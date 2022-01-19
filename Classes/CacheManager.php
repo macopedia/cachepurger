@@ -243,7 +243,7 @@ final class CacheManager implements LoggerAwareInterface
     {
         $this->logger->debug('getCurlHandleForCacheClearing: ' . $url);
 
-        return $this->createCurlHandle($varnishUrl, 'X-Url: (' . $url . ')');
+        return $this->createCurlHandle($varnishUrl, 'X-Url: ' . $url);
     }
 
     /**
