@@ -102,7 +102,6 @@ final class CacheManager implements LoggerAwareInterface
             !is_array($this->settings['varnish.']) ||
             (
                 count($this->clearQueue) === 0 ||
-                count($this->clearQueueTags) === 0 ||
                 count($this->clearQueueSoftTags) === 0
             )
         ) {
