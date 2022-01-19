@@ -255,7 +255,7 @@ final class CacheManager implements LoggerAwareInterface
     {
         $this->logger->debug('getCurlHandleForCacheClearing: ' . $tag);
 
-        return $this->createCurlHandle($varnishUrl, 'X-Tags: ' . $tag);
+        return $this->createCurlHandle($varnishUrl, 'X-Tags: ' . $tag, 'BAN');
     }
 
     /**
@@ -269,9 +269,9 @@ final class CacheManager implements LoggerAwareInterface
 
         $this->logger->debug('getCurlHandleForCacheClearing: ' . $combinedTags);
 
-        $header = 'ykey-purge: ' . $combinedTags;
+        $header = 'X-Tags: ' . $combinedTags;
 
-        return $this->createCurlHandle($varnishUrl, $header, 'PURGE');
+        return $this->createCurlHandle($varnishUrl, $header, 'BAN');
     }
 
     /**
