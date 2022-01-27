@@ -11,10 +11,6 @@ tx_cachepurger.settings {
         1 = varnish_ip_frontend
         2 = varnish_ip_backend
     }
-    domains {
-        1 = https://frontend_url.tld
-        2 = https://backend_url.tld
-    }
     tags.0 = T3
 }
 ```
