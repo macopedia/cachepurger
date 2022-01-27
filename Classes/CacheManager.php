@@ -87,6 +87,7 @@ final class CacheManager implements LoggerAwareInterface
         }
 
         if (count($curlHandles) === 0) {
+            curl_multi_close($multiHandle);
             return;
         }
 
