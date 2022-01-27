@@ -3,7 +3,6 @@
   "type": "typo3-cms-extension",
   "description": "Fork from https://github.com/TYPO3-extensions/purge",
   "minimum-stability": "stable",
-  "version": "1.0.0",
   "license": ["GPL-2.0+"],
   "keywords": ["TYPO3 CMS", "Purge"],
   "require": {
