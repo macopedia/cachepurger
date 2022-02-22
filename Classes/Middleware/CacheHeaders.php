@@ -18,14 +18,12 @@ final class CacheHeaders implements MiddlewareInterface
         $tsfe = $GLOBALS['TSFE'] ?? null;
 
         if ($tsfe instanceof TypoScriptFrontendController) {
-            if ($tsfe->isStaticCacheble()) {
-                $response = $response->withAddedHeader('X', 'cache');
-            }
-
             $tags[] = 'T3';
             $tags[] = 'PAGE-' . $tsfe->id;
 
             $tags = implode(' ', $tags);
+
+            $response = $response->withAddedHeader('X-TYPO3-caching', $tsfe->isStaticCacheble() ? 'cache' : 'no-cache');
             $response = $response->withAddedHeader('X-Tags', $tags);
         }
 
