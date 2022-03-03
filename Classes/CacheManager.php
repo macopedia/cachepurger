@@ -121,7 +121,7 @@ final class CacheManager implements LoggerAwareInterface
                 $this->logger->error('error: ' . curl_error($ch));
             } else {
                 $info = curl_getinfo($ch);
-                $this->logger->error('info: ', $info);
+                $this->logger->debug('info: ', $info);
             }
             curl_multi_remove_handle($multiHandle, $ch);
             curl_close($ch);
