@@ -23,7 +23,7 @@ final class TceMain
     {
         $backendUser = $this->getBackendUser();
         if ($backendUser->isAdmin() || $backendUser->getTSConfig()) {
-            $this->cacheManager->clearCache($params['cacheCmd']);
+            $this->cacheManager->clearCache($params['cacheCmd'] ?? null);
         }
     }
 
