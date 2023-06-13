@@ -2,6 +2,7 @@
 
 namespace Macopedia\CachePurger;
 
+use CurlHandle;
 use Psr\Log\LoggerAwareInterface;
 use Psr\Log\LoggerAwareTrait;
 use TYPO3\CMS\Core\Utility\GeneralUtility;
@@ -14,14 +15,12 @@ use function curl_error;
 use function curl_getinfo;
 use function curl_init;
 use function curl_multi_add_handle;
-use function curl_multi_close;
 use function curl_multi_exec;
 use function curl_multi_init;
 use function curl_multi_remove_handle;
 use function curl_multi_select;
 use function curl_setopt;
 use function is_array;
-use function is_resource;
 use const CURLM_CALL_MULTI_PERFORM;
 use const CURLM_OK;
 use const CURLOPT_CUSTOMREQUEST;
@@ -71,14 +70,10 @@ final class CacheManager implements LoggerAwareInterface
 
         $multiHandle = curl_multi_init();
 
-        if (!is_resource($multiHandle)) {
-            return;
-        }
-
         foreach ($this->settings['varnish.'] as $varnishInstance) {
             foreach ($this->clearQueue as $tag) {
                 $ch = $this->getCurlHandleForCacheClearingAsTag($tag, $varnishInstance);
-                if (!is_resource($ch)) {
+                if (!$ch) {
                     continue;
                 }
                 $curlHandles[] = $ch;
@@ -87,7 +82,6 @@ final class CacheManager implements LoggerAwareInterface
         }
 
         if (count($curlHandles) === 0) {
-            curl_multi_close($multiHandle);
             return;
         }
 
@@ -113,10 +107,6 @@ final class CacheManager implements LoggerAwareInterface
         }
 
         foreach ($curlHandles as $ch) {
-            if (!is_resource($ch)) {
-                continue;
-            }
-
             if (curl_errno($ch) !== 0) {
                 $this->logger->error('error: ' . curl_error($ch));
             } else {
@@ -126,8 +116,6 @@ final class CacheManager implements LoggerAwareInterface
             curl_multi_remove_handle($multiHandle, $ch);
             curl_close($ch);
         }
-
-        curl_multi_close($multiHandle);
 
         $this->clearQueue = [];
     }
@@ -162,7 +150,7 @@ final class CacheManager implements LoggerAwareInterface
     /**
      * @param string $tag
      * @param string $varnishUrl
-     * @return false|resource
+     * @return false|CurlHandle
      */
     protected function getCurlHandleForCacheClearingAsTag(string $tag, string $varnishUrl)
     {
@@ -172,7 +160,7 @@ final class CacheManager implements LoggerAwareInterface
     /**
      * @param string $varnishUrl
      * @param string $header
-     * @return false|resource
+     * @return false|CurlHandle
      */
     protected function createCurlHandle(string $varnishUrl, string $header, string $method = 'BAN')
     {
