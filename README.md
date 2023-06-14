@@ -1,8 +1,8 @@
-# CachePurger for Varnish 
+# CachePurger for Varnish
 
 - supports clear per page or all pages
-- supports TYPO3 9.5-10.4
-- requires php >= 7.4
+- supports TYPO3 >= 11.5
+- requires php >= 8.1
 
 # Example configuration in Typoscript
 ```
