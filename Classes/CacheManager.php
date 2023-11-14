@@ -86,7 +86,7 @@ final class CacheManager implements LoggerAwareInterface
         }
 
         // initialize all connections
-        $active = null;
+        $active = 0;
         do {
             $multiExecResult = curl_multi_exec($multiHandle, $active);
             $this->logger->debug('status init: ' . $multiExecResult);
