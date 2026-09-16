@@ -1,56 +1,43 @@
 <?php
 
+declare(strict_types=1);
+
 namespace Macopedia\CachePurger\Hooks;
 
 use Macopedia\CachePurger\CacheManager;
-use TYPO3\CMS\Core\Authentication\BackendUserAuthentication;
-use TYPO3\CMS\Core\Utility\GeneralUtility;
+use Symfony\Component\DependencyInjection\Attribute\Autoconfigure;
 
+/**
+ * DataHandler cache clearing hooks. TYPO3 has already decided that its own cache is cleared, so
+ * Varnish follows unconditionally. Runs in backend requests as well as on the CLI (scheduler,
+ * commands), so nothing here may rely on a web request.
+ */
+#[Autoconfigure(public: true)]
 final class TceMain
 {
-    private CacheManager $cacheManager;
-
-    public function __construct()
+    public function __construct(private readonly CacheManager $cacheManager)
     {
-        $this->cacheManager = GeneralUtility::makeInstance(CacheManager::class);
     }
 
     /**
-     * @param array<mixed> $params
-     * @param \TYPO3\CMS\Core\DataHandling\DataHandler $parent
-     */
-    public function clearCacheCmd($params, &$parent): void
-    {
-        $backendUser = $this->getBackendUser();
-        if ($backendUser->isAdmin() || $backendUser->getTSConfig()) {
-            $this->cacheManager->clearCache($params['cacheCmd'] ?? null);
-        }
-    }
-
-    /**
-     * Called when TYPO3 clears a list of uid's.
+     * clearCachePostProc: TYPO3 processed a cache command ("all", "pages", a page uid).
      *
-     * @param array<mixed> $params
-     * @param \TYPO3\CMS\Core\DataHandling\DataHandler $parent
+     * @param array<string, mixed> $params
      */
-    public function clearCacheForListOfUids($params, &$parent): void
+    public function clearCacheCmd(array $params): void
     {
-        if (!isset($params['pageIdArray'])) {
-            return;
-        }
-
-        foreach ($params['pageIdArray'] as $uid) {
-            $this->cacheManager->clearForTag('PAGE-' . (int)$uid);
-        }
+        $this->cacheManager->clearCache(isset($params['cacheCmd']) ? (string)$params['cacheCmd'] : null);
     }
 
     /**
-     * Returns the current BE user.
+     * clearPageCacheEval: TYPO3 clears the cache of a list of page uids.
      *
-     * @return BackendUserAuthentication
+     * @param array<string, mixed> $params
      */
-    protected function getBackendUser(): BackendUserAuthentication
+    public function clearCacheForListOfUids(array $params): void
     {
-        return $GLOBALS['BE_USER'];
+        foreach ($params['pageIdArray'] ?? [] as $uid) {
+            $this->cacheManager->clearForTag('PAGE-' . (int)$uid, (int)$uid);
+        }
     }
 }

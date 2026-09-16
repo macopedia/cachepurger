@@ -1,0 +1,11 @@
+# cat=basic; type=string; label=Varnish hosts: Comma separated list of Varnish URLs that receive the BAN requests, e.g. "http://varnish-frontend,http://varnish-backend". Can be overridden per site in the site settings (key "cachepurger.hosts").
+hosts =
+
+# cat=basic; type=string; label=Tags purged on clear all / clear pages: Comma separated list of X-Tags banned when TYPO3 clears all page caches.
+tags = T3
+
+# cat=basic; type=int+; label=Request timeout (seconds): Connect and total timeout for every BAN request, so an unreachable Varnish never blocks the editor or the CLI.
+timeout = 5
+
+# cat=basic; type=boolean; label=Verify TLS certificates: Verify the certificate of https Varnish hosts. Disable for self-signed certificates on an internal network; http hosts are unaffected.
+verifyTls = 1
