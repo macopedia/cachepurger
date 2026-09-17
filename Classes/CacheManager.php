@@ -1,123 +1,102 @@
 <?php
 
+declare(strict_types=1);
+
 namespace Macopedia\CachePurger;
 
-use CurlHandle;
-use Psr\Log\LoggerAwareInterface;
-use Psr\Log\LoggerAwareTrait;
-use TYPO3\CMS\Core\Utility\GeneralUtility;
-use TYPO3\CMS\Extbase\Configuration\ConfigurationManager;
-use TYPO3\CMS\Extbase\Configuration\ConfigurationManagerInterface;
-use function array_unique;
-use function curl_close;
-use function curl_errno;
-use function curl_error;
-use function curl_getinfo;
-use function curl_init;
-use function curl_multi_add_handle;
-use function curl_multi_exec;
-use function curl_multi_init;
-use function curl_multi_remove_handle;
-use function curl_multi_select;
-use function curl_setopt;
-use function is_array;
-use const CURLM_CALL_MULTI_PERFORM;
-use const CURLM_OK;
-use const CURLOPT_CUSTOMREQUEST;
-use const CURLOPT_HTTPHEADER;
-use const CURLOPT_RETURNTRANSFER;
-use const CURLOPT_SSL_VERIFYHOST;
-use const CURLOPT_SSL_VERIFYPEER;
-use const CURLOPT_URL;
+use GuzzleHttp\ClientInterface;
+use GuzzleHttp\Pool;
+use GuzzleHttp\Promise\PromiseInterface;
+use Macopedia\CachePurger\Configuration\PurgeSettings;
+use Psr\Http\Message\ResponseInterface;
+use Psr\Log\LoggerInterface;
+use Symfony\Component\DependencyInjection\Attribute\Autoconfigure;
+use TYPO3\CMS\Core\Http\Client\GuzzleClientFactory;
+use TYPO3\CMS\Core\Http\Request;
 
-final class CacheManager implements LoggerAwareInterface
+/**
+ * Collects cache tags to ban and sends the BAN requests to the configured Varnish hosts in one
+ * batch at the end of the request (or when execute() is called explicitly).
+ *
+ * Requests go through TYPO3's HTTP client, so the installation's global HTTP settings
+ * (proxy, CA bundle, ...) apply.
+ */
+#[Autoconfigure(public: true)]
+final class CacheManager
 {
-    use LoggerAwareTrait;
+    private const METHOD = 'BAN';
+    private const TAG_HEADER = 'X-Tags';
 
     /**
-     * @var array<string, mixed>
+     * Number of BAN requests in flight at the same time. A page save can produce hundreds of tags
+     * (TYPO3 clears parent, siblings and translations too); firing them all at once would flood
+     * Varnish and the local socket table.
      */
-    protected array $settings;
-    /**
-     * @var array<string>
-     */
-    protected array $clearQueue = [];
+    private const CONCURRENCY = 10;
 
-    public function __construct()
-    {
-        $configurationManager = GeneralUtility::makeInstance(ConfigurationManager::class);
-        $this->settings = $configurationManager->getConfiguration(
-                ConfigurationManagerInterface::CONFIGURATION_TYPE_FULL_TYPOSCRIPT
-            )['tx_cachepurger.']['settings.'] ?? [];
+    /**
+     * Queued bans grouped by target host list.
+     *
+     * @var array<string, array{hosts: list<string>, tags: array<string, string>}>
+     */
+    private array $queue = [];
+
+    public function __construct(
+        private readonly PurgeSettings $settings,
+        private readonly GuzzleClientFactory $clientFactory,
+        private readonly LoggerInterface $logger,
+    ) {
     }
 
     /**
-     * @param string $tag
+     * Bans a tag on the hosts responsible for the given page, or on the global hosts when no page
+     * is given. Site specific additional tags (site setting "cachepurger.tags") are banned along.
      */
-    public function clearForTag(string $tag): void
+    public function clearForTag(string $tag, ?int $pageId = null): void
     {
-        $this->clearQueue[] = $tag;
-        $this->clearQueue = array_unique($this->clearQueue);
+        $tags = $pageId > 0 ? [$tag, ...$this->settings->getSiteTags($pageId)] : [$tag];
+        $this->enqueue($this->settings->getVarnishHosts($pageId), $tags);
+    }
+
+    /**
+     * "all" / "pages": bans the global tags on every host of the installation, including hosts
+     * that are only configured per site, since there is no page to pick a site from.
+     */
+    public function clearCache(?string $cmd): void
+    {
+        match (true) {
+            $cmd === 'all', $cmd === 'pages' => $this->enqueue($this->settings->getAllVarnishHosts(), $this->settings->getGlobalTags()),
+            (int)$cmd > 0 => $this->clearForTag('PAGE-' . (int)$cmd, (int)$cmd),
+            default => null,
+        };
     }
 
     public function execute(): void
     {
-        $curlHandles = [];
-
-        if (!isset($this->settings['varnish.']) || !is_array($this->settings['varnish.'])) {
+        if ($this->queue === []) {
             return;
         }
+        $queue = $this->queue;
+        $this->queue = [];
 
-        $multiHandle = curl_multi_init();
-
-        foreach ($this->settings['varnish.'] as $varnishInstance) {
-            foreach ($this->clearQueue as $tag) {
-                $ch = $this->getCurlHandleForCacheClearingAsTag($tag, $varnishInstance);
-                if (!$ch) {
-                    continue;
-                }
-                $curlHandles[] = $ch;
-                curl_multi_add_handle($multiHandle, $ch);
-            }
+        $options = [
+            'connect_timeout' => $this->settings->getTimeout(),
+            'timeout' => $this->settings->getTimeout(),
+        ];
+        if (!$this->settings->verifyTls()) {
+            $options['verify'] = false;
         }
+        $client = $this->clientFactory->getClient();
 
-        if (count($curlHandles) === 0) {
-            return;
-        }
-
-        // initialize all connections
-        $active = 0;
-        do {
-            $multiExecResult = curl_multi_exec($multiHandle, $active);
-            $this->logger->debug('status init: ' . $multiExecResult);
-        } while ($multiExecResult === CURLM_CALL_MULTI_PERFORM);
-
-        $this->logger->debug('connections initialized, status: ' . $multiExecResult);
-
-        // now wait for activity on any connection (this blocks script execution)
-        while ($active && $multiExecResult === CURLM_OK) {
-            $this->logger->debug('waiting for activity, status: ' . $multiExecResult);
-
-            if (curl_multi_select($multiHandle) !== -1) {
-                do {
-                    $multiExecResult = curl_multi_exec($multiHandle, $active);
-                    $this->logger->debug('status activity: ' . $multiExecResult);
-                } while ($multiExecResult === CURLM_CALL_MULTI_PERFORM);
-            }
-        }
-
-        foreach ($curlHandles as $ch) {
-            if (curl_errno($ch) !== 0) {
-                $this->logger->error('error: ' . curl_error($ch));
-            } else {
-                $info = curl_getinfo($ch);
-                $this->logger->debug('info: ', $info);
-            }
-            curl_multi_remove_handle($multiHandle, $ch);
-            curl_close($ch);
-        }
-
-        $this->clearQueue = [];
+        (new Pool($client, $this->requests($queue, $client, $options), [
+            'concurrency' => self::CONCURRENCY,
+            'fulfilled' => function (ResponseInterface $response): void {
+                $this->logger->debug('Varnish BAN sent', ['status' => $response->getStatusCode()]);
+            },
+            'rejected' => function (\Throwable $reason): void {
+                $this->logger->error('Varnish BAN failed: ' . $reason->getMessage());
+            },
+        ]))->promise()->wait();
     }
 
     public function __destruct()
@@ -125,59 +104,39 @@ final class CacheManager implements LoggerAwareInterface
         $this->execute();
     }
 
-    public function clearCache(?string $cmd): void
+    /**
+     * One BAN request per host and tag, created lazily as the pool consumes them.
+     *
+     * @param array<string, array{hosts: list<string>, tags: array<string, string>}> $queue
+     * @param array<string, mixed> $options
+     * @return \Generator<int, callable(): PromiseInterface>
+     */
+    private function requests(array $queue, ClientInterface $client, array $options): \Generator
     {
-        switch ($cmd) {
-            case 'pages':
-                $this->logger->debug('clearCacheCmd() pages');
-            // no break
-            case 'all':
-                $this->logger->debug('clearCacheCmd() all');
-
-                if (isset($this->settings['tags.']) && is_array($this->settings['tags.'])) {
-                    foreach ($this->settings['tags.'] as $tag) {
-                        $this->clearForTag($tag);
-                    }
+        foreach ($queue as $entry) {
+            foreach ($entry['hosts'] as $host) {
+                foreach ($entry['tags'] as $tag) {
+                    $request = new Request($host, self::METHOD, 'php://temp', [self::TAG_HEADER => $tag]);
+                    yield fn (): PromiseInterface => $client->sendAsync($request, $options);
                 }
-                break;
-            default:
-                if ((int)$cmd > 0) {
-                    $this->clearForTag('PAGE-' . (int)$cmd);
-                }
+            }
         }
     }
 
     /**
-     * @param string $tag
-     * @param string $varnishUrl
-     * @return false|CurlHandle
+     * @param list<string> $hosts
+     * @param list<string> $tags
      */
-    protected function getCurlHandleForCacheClearingAsTag(string $tag, string $varnishUrl)
+    private function enqueue(array $hosts, array $tags): void
     {
-        return $this->createCurlHandle($varnishUrl, 'X-Tags: ' . $tag);
-    }
-
-    /**
-     * @param string $varnishUrl
-     * @param string $header
-     * @return false|CurlHandle
-     */
-    protected function createCurlHandle(string $varnishUrl, string $header, string $method = 'BAN')
-    {
-        $curlHandle = curl_init();
-        curl_setopt($curlHandle, CURLOPT_URL, $varnishUrl);
-        curl_setopt($curlHandle, CURLOPT_CUSTOMREQUEST, $method);
-        curl_setopt($curlHandle, CURLOPT_RETURNTRANSFER, 1);
-        /**
-         * @phpstan-ignore-next-line
-         */
-        curl_setopt($curlHandle, CURLOPT_SSL_VERIFYPEER, 0);
-        /**
-         * @phpstan-ignore-next-line
-         */
-        curl_setopt($curlHandle, CURLOPT_SSL_VERIFYHOST, 0);
-        curl_setopt($curlHandle, CURLOPT_HTTPHEADER, [$header]);
-
-        return $curlHandle;
+        if ($hosts === [] || $tags === []) {
+            $this->logger->debug('No Varnish hosts or tags configured, nothing banned', ['tags' => $tags]);
+            return;
+        }
+        $key = implode('|', $hosts);
+        $this->queue[$key]['hosts'] = $hosts;
+        foreach ($tags as $tag) {
+            $this->queue[$key]['tags'][$tag] = $tag;
+        }
     }
 }

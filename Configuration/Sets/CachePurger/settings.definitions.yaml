@@ -1,0 +1,17 @@
+categories:
+  cachepurger:
+    label: Cache Purger
+
+settings:
+  cachepurger.hosts:
+    label: Varnish hosts
+    description: Varnish URLs that receive BAN requests for pages of this site. Leave empty to use the extension configuration.
+    category: cachepurger
+    type: stringlist
+    default: []
+  cachepurger.tags:
+    label: Additional tags
+    description: Tags banned on this site's hosts together with every page of this site, e.g. a navigation object the frontend caches per site.
+    category: cachepurger
+    type: stringlist
+    default: []
